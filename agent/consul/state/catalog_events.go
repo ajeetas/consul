@@ -288,11 +288,7 @@ func serviceHealthToConnectEvents(events ...stream.Event) []stream.Event {
 			continue
 		}
 		node := getPayloadCheckServiceNode(event.Payload)
-		// TODO: do we need to handle gateways here as well?
-		if node.Service == nil ||
-			(node.Service.Kind != structs.ServiceKindConnectProxy && !node.Service.Connect.Native) {
-			// Event is not a service instance (i.e. just a node registration)
-			// or is not a service that is not connect-enabled in some way.
+		if !isConnectEnabledNodeService(node.Service) {
 			continue
 		}
 
@@ -300,6 +296,7 @@ func serviceHealthToConnectEvents(events ...stream.Event) []stream.Event {
 		connectEvent.Topic = TopicServiceHealthConnect
 
 		// If this is a proxy, set the key to the destination service name.
+		// TODO(streaming): what key to use for Kind==ServiceKindTerminatingGateway ?
 		if node.Service.Kind == structs.ServiceKindConnectProxy {
 			connectEvent.Key = node.Service.Proxy.DestinationServiceName
 		}
@@ -308,6 +305,18 @@ func serviceHealthToConnectEvents(events ...stream.Event) []stream.Event {
 	}
 
 	return serviceHealthConnectEvents
+}
+
+// TODO(streaming): add test case for Kind==ServiceKindTerminatingGateway
+func isConnectEnabledNodeService(sn *structs.NodeService) bool {
+	if sn == nil {
+		return false
+	}
+	switch sn.Kind {
+	case structs.ServiceKindConnectProxy, structs.ServiceKindTerminatingGateway:
+		return true
+	}
+	return sn.Connect.Native
 }
 
 func getPayloadCheckServiceNode(payload interface{}) *structs.CheckServiceNode {
