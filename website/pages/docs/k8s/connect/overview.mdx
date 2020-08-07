@@ -276,13 +276,13 @@ Annotations can be used to configure the injection behavior.
   ```
 
 - `consul.hashicorp.com/sidecar-proxy-` - override default resource settings for
-  the Envoy sidecar proxy container.
+  the sidecar proxy container.
   The defaults are set in Helm config via the [`connectInject.sidecarProxy.resources`](/docs/k8s/helm#v-connectinject-sidecarproxy-resources) key.
 
-  - `consul.hashicorp.com/sidecar-proxy-cpu-limit` - override the default CPU limit.
-  - `consul.hashicorp.com/sidecar-proxy-cpu-request` - override the default CPU request.
-  - `consul.hashicorp.com/sidecar-proxy-memory-limit` - override the default memory limit.
-  - `consul.hashicorp.com/sidecar-proxy-memory-request` - override the default memory request.
+  - `consul.hashicorp.com/sidecar-proxy-cpu-limit` - Override the default CPU limit.
+  - `consul.hashicorp.com/sidecar-proxy-cpu-request` - Override the default CPU request.
+  - `consul.hashicorp.com/sidecar-proxy-memory-limit` - Override the default memory limit.
+  - `consul.hashicorp.com/sidecar-proxy-memory-request` - Override the default memory request.
 
 ### Deployments, StatefulSets, etc.
 
