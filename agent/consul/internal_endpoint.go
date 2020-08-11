@@ -250,6 +250,11 @@ func (m *Internal) KeyringOperation(
 	args *structs.KeyringRequest,
 	reply *structs.KeyringResponses) error {
 
+	// Error aggressively to be clear about LocalOnly behavior
+	if args.LocalOnly && args.Operation != structs.KeyringList {
+		return fmt.Errorf("argument error: LocalOnly can only be used for List operations")
+	}
+
 	// Check ACLs
 	identity, rule, err := m.srv.ResolveTokenToIdentityAndAuthorizer(args.Token)
 	if err != nil {
@@ -277,44 +282,58 @@ func (m *Internal) KeyringOperation(
 		}
 	}
 
-	// Validate use of local-only
-	if args.LocalOnly && args.Operation != structs.KeyringList {
-		// Error aggressively to be clear about LocalOnly behavior
-		return fmt.Errorf("argument error: LocalOnly can only be used for List operations")
-	}
-
-	// args.LocalOnly should always be false for non-GET requests
-	if !args.LocalOnly {
-		// Only perform WAN keyring querying and RPC forwarding once
-		if !args.Forwarded && m.srv.serfWAN != nil {
-			args.Forwarded = true
-			m.executeKeyringOp(args, reply, true)
-			return m.srv.globalRPC("Internal.KeyringOperation", args, reply)
+	if args.LocalOnly || args.Forwarded || m.srv.serfWAN != nil {
+		// Handle operations, that are not LocalOnly and have been forwarded
+		// already. Now this operation needs to be applied to LAN.
+		reply.Responses = append(reply.Responses, m.executeKeyringOpLAN(args)...)
+		return nil
+	} else {
+		// Handle not already forwarded operation. Only perform WAN
+		// keyring querying and RPC forwarding once
+		args.Forwarded = true
+		reply.Responses = append(reply.Responses, m.executeKeyringOpWAN(args))
+		reply.Responses = append(reply.Responses, m.executeKeyringOpLAN(args)...)
+		responses, err := m.srv.remoteKeyringRPCs("Internal.KeyringOperation", args)
+		if err != nil {
+			return err
 		}
+		reply.Add(responses)
+		return nil
 	}
-
-	// Query the LAN keyring of this node's DC
-	m.executeKeyringOp(args, reply, false)
-	return nil
 }
 
-// executeKeyringOp executes the keyring-related operation in the request
-// on either the WAN or LAN pools.
-func (m *Internal) executeKeyringOp(
-	args *structs.KeyringRequest,
-	reply *structs.KeyringResponses,
-	wan bool) {
-
-	if wan {
-		mgr := m.srv.KeyManagerWAN()
-		m.executeKeyringOpMgr(mgr, args, reply, wan, "")
-	} else {
-		segments := m.srv.LANSegments()
-		for name, segment := range segments {
-			mgr := segment.KeyManager()
-			m.executeKeyringOpMgr(mgr, args, reply, wan, name)
-		}
+func (m *Internal) executeKeyringOpLAN(args *structs.KeyringRequest) []*structs.KeyringResponse {
+	responses := []*structs.KeyringResponse{}
+	segments := m.srv.LANSegments()
+	for name, segment := range segments {
+		mgr := segment.KeyManager()
+		serfResp, err := m.executeKeyringOpMgr(mgr, args)
+		resp := translateKeyResponseToKeyringResponse(serfResp, m.srv.config.Datacenter, err)
+		resp.Segment = name
+		responses = append(responses, &resp)
 	}
+	return responses
+}
+
+func (m *Internal) executeKeyringOpWAN(args *structs.KeyringRequest) *structs.KeyringResponse {
+	mgr := m.srv.KeyManagerWAN()
+	serfResp, err := m.executeKeyringOpMgr(mgr, args)
+	resp := translateKeyResponseToKeyringResponse(serfResp, m.srv.config.Datacenter, err)
+	resp.WAN = true
+	return &resp
+}
+
+func translateKeyResponseToKeyringResponse(keyresponse *serf.KeyResponse, datacenter string, err error) structs.KeyringResponse {
+	resp := structs.KeyringResponse{
+		Datacenter: datacenter,
+		Messages:   keyresponse.Messages,
+		Keys:       keyresponse.Keys,
+		NumNodes:   keyresponse.NumNodes,
+	}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	return resp
 }
 
 // executeKeyringOpMgr executes the appropriate keyring-related function based on
@@ -323,9 +342,7 @@ func (m *Internal) executeKeyringOp(
 func (m *Internal) executeKeyringOpMgr(
 	mgr *serf.KeyManager,
 	args *structs.KeyringRequest,
-	reply *structs.KeyringResponses,
-	wan bool,
-	segment string) {
+) (*serf.KeyResponse, error) {
 	var serfResp *serf.KeyResponse
 	var err error
 
@@ -341,20 +358,7 @@ func (m *Internal) executeKeyringOpMgr(
 		serfResp, err = mgr.RemoveKeyWithOptions(args.Key, opts)
 	}
 
-	errStr := ""
-	if err != nil {
-		errStr = err.Error()
-	}
-
-	reply.Responses = append(reply.Responses, &structs.KeyringResponse{
-		WAN:        wan,
-		Datacenter: m.srv.config.Datacenter,
-		Segment:    segment,
-		Messages:   serfResp.Messages,
-		Keys:       serfResp.Keys,
-		NumNodes:   serfResp.NumNodes,
-		Error:      errStr,
-	})
+	return serfResp, err
 }
 
 // aclAccessorID is used to convert an ACLToken's secretID to its accessorID for non-

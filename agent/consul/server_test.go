@@ -1286,7 +1286,7 @@ func (r *fakeGlobalResp) New() interface{} {
 	return struct{}{}
 }
 
-func TestServer_globalRPCErrors(t *testing.T) {
+func TestServer_remoteKeyringRPCs(t *testing.T) {
 	t.Parallel()
 	dir1, s1 := testServerDC(t, "dc1")
 	defer os.RemoveAll(dir1)
@@ -1298,7 +1298,7 @@ func TestServer_globalRPCErrors(t *testing.T) {
 	})
 
 	// Check that an error from a remote DC is returned
-	err := s1.globalRPC("Bad.Method", nil, &fakeGlobalResp{})
+	_, err := s1.remoteKeyringRPCs("Bad.Method", nil)
 	if err == nil {
 		t.Fatalf("should have errored")
 	}

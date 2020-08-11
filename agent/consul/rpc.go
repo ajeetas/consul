@@ -635,22 +635,20 @@ func (s *Server) forwardDC(method, dc string, args interface{}, reply interface{
 	return nil
 }
 
-// globalRPC is used to forward an RPC request to one server in each datacenter.
+// remoteKeyringRPCs is used to forward an RPC request to one server in each datacenter.
 // This will only error for RPC-related errors. Otherwise, application-level
 // errors can be sent in the response objects.
-func (s *Server) globalRPC(method string, args interface{},
-	reply structs.CompoundResponse) error {
+func (s *Server) remoteKeyringRPCs(method string, args interface{}) (*structs.KeyringResponses, error) {
 
-	// Make a new request into each datacenter
-	dcs := s.router.GetDatacenters()
+	// Make a new request into each remote datacenter
+	dcs := s.router.GetRemoteDatacenters(s.config.Datacenter)
 
-	replies, total := 0, len(dcs)
-	errorCh := make(chan error, total)
-	respCh := make(chan interface{}, total)
+	errorCh := make(chan error, len(dcs))
+	respCh := make(chan *structs.KeyringResponses, len(dcs))
 
 	for _, dc := range dcs {
 		go func(dc string) {
-			rr := reply.New()
+			rr := &structs.KeyringResponses{}
 			if err := s.forwardDC(method, dc, args, &rr); err != nil {
 				errorCh <- err
 				return
@@ -659,16 +657,16 @@ func (s *Server) globalRPC(method string, args interface{},
 		}(dc)
 	}
 
-	for replies < total {
+	responses := &structs.KeyringResponses{}
+	for i := 0; i < len(dcs); i++ {
 		select {
 		case err := <-errorCh:
-			return err
+			return nil, err
 		case rr := <-respCh:
-			reply.Add(rr)
-			replies++
+			responses.Add(rr)
 		}
 	}
-	return nil
+	return responses, nil
 }
 
 type raftEncoder func(structs.MessageType, interface{}) ([]byte, error)
